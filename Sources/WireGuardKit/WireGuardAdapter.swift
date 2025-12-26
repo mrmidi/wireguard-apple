@@ -43,6 +43,10 @@ public class WireGuardAdapter {
 
     /// Network routes monitor.
     private var networkMonitor: NWPathMonitor?
+    
+    /// Startup time for grace period (ignore network changes during startup)
+    private var startupTime: Date?
+    private let startupGracePeriod: TimeInterval = 5.0
 
     /// Packet tunnel provider.
     private weak var packetTunnelProvider: NEPacketTunnelProvider?
@@ -199,6 +203,7 @@ public class WireGuardAdapter {
                     settingsGenerator
                 )
                 self.networkMonitor = networkMonitor
+                self.startupTime = Date() // Record startup time for grace period
                 completionHandler(nil)
             } catch let error as WireGuardAdapterError {
                 networkMonitor.cancel()
@@ -423,6 +428,15 @@ public class WireGuardAdapter {
         #elseif os(iOS) || os(tvOS)
         switch self.state {
         case .started(let handle, let settingsGenerator):
+            // Ignore unsatisfied events during startup grace period
+            if !path.status.isSatisfiable {
+                if let startTime = self.startupTime,
+                   Date().timeIntervalSince(startTime) < self.startupGracePeriod {
+                    self.logHandler(.verbose, "Ignoring unsatisfied path during startup grace period (\(Date().timeIntervalSince(startTime))s elapsed)")
+                    return
+                }
+            }
+            
             if path.status.isSatisfiable {
                 let (wgConfig, resolutionResults) = settingsGenerator.endpointUapiConfiguration()
                 self.logEndpointResolutionResults(resolutionResults)
